@@ -166,10 +166,13 @@
       const finalFileName = needsConversion ? 
         fileName.replace(/\.[^/.]+$/, '.mp4') : fileName;
       
-      // Configurar URL do Wowza
+      // Configurar URL do Wowza - SEMPRE usar URLs diretas do Wowza
       const fetch = require('node-fetch');
       const isProduction = process.env.NODE_ENV === 'production';
-      const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
+      
+      // SEMPRE usar o servidor Wowza diretamente (não localhost)
+      const wowzaHost = '51.222.156.223'; // IP direto do Wowza
+      const wowzaPort = 6980; // Porta para VOD
       const wowzaUser = 'admin';
       const wowzaPassword = 'FK38Ca2SuE6jvJXed97VMn';
       
@@ -178,11 +181,11 @@
         // Para streams HLS - usar formato correto do Wowza
         wowzaUrl = `http://${wowzaHost}:1935/vod/_definst_/mp4:${userLogin}/${folderName}/${finalFileName}/playlist.m3u8`;
       } else {
-        // Para arquivos de vídeo diretos - usar porta 6980
-        wowzaUrl = `http://${wowzaUser}:${wowzaPassword}@${wowzaHost}:6980/content/${userLogin}/${folderName}/${finalFileName}`;
+        // Para arquivos de vídeo diretos - usar porta 6980 com autenticação
+        wowzaUrl = `http://${wowzaUser}:${wowzaPassword}@${wowzaHost}:${wowzaPort}/content/${userLogin}/${folderName}/${finalFileName}`;
       }
       
-      console.log(`🔗 Redirecionando para: ${wowzaUrl}`);
+      console.log(`🔗 Redirecionando para Wowza: ${wowzaUrl}`);
       
       try {
         const requestHeaders = {
@@ -196,27 +199,27 @@
         const wowzaResponse = await fetch(wowzaUrl, {
           method: req.method,
           headers: requestHeaders,
-          timeout: 15000
+          timeout: 30000 // Timeout aumentado para melhor estabilidade
         });
         
         if (!wowzaResponse.ok) {
-          console.log(`❌ Erro ao acessar vídeo (${wowzaResponse.status}): ${wowzaUrl}`);
+          console.log(`❌ Erro ao acessar vídeo no Wowza (${wowzaResponse.status}): ${wowzaUrl}`);
           
           // Se falhou com MP4, tentar com arquivo original
           if (needsConversion && finalFileName !== fileName) {
             console.log(`🔄 Tentando arquivo original: ${fileName}`);
             const originalUrl = isStreamFile ? 
               `http://${wowzaHost}:1935/vod/_definst_/mp4:${userLogin}/${folderName}/${fileName}/playlist.m3u8` :
-              `http://${wowzaUser}:${wowzaPassword}@${wowzaHost}:6980/content/${userLogin}/${folderName}/${fileName}`;
+              `http://${wowzaUser}:${wowzaPassword}@${wowzaHost}:${wowzaPort}/content/${userLogin}/${folderName}/${fileName}`;
             
             const originalResponse = await fetch(originalUrl, {
               method: req.method,
               headers: requestHeaders,
-              timeout: 15000
+              timeout: 30000
             });
             
             if (originalResponse.ok) {
-              console.log(`✅ Servindo arquivo original: ${originalUrl}`);
+              console.log(`✅ Servindo arquivo original do Wowza: ${originalUrl}`);
               originalResponse.headers.forEach((value, key) => {
                 if (!res.headersSent) {
                   res.setHeader(key, value);
@@ -228,11 +231,11 @@
           
           return res.status(404).json({ 
             error: 'Vídeo não encontrado',
-            details: 'O arquivo não foi encontrado no servidor de streaming'
+            details: 'O arquivo não foi encontrado no servidor Wowza'
           });
         }
         
-        console.log(`✅ Servindo vídeo via Wowza: ${wowzaUrl}`);
+        console.log(`✅ Servindo vídeo diretamente do Wowza: ${wowzaUrl}`);
         
         // Copiar headers da resposta do Wowza
         wowzaResponse.headers.forEach((value, key) => {
@@ -245,14 +248,130 @@
         wowzaResponse.body.pipe(res);
         
       } catch (fetchError) {
-        console.error('❌ Erro ao acessar Wowza:', fetchError);
-        return res.status(500).json({ 
-          error: 'Erro interno do servidor de streaming',
-          details: fetchError.message 
-        });
+        console.error('❌ Erro ao acessar servidor Wowza:', fetchError);
+        
+        // Fallback: tentar redirecionar diretamente
+        console.log(`🔄 Tentando redirecionamento direto para: ${wowzaUrl}`);
+        res.redirect(wowzaUrl);
       }
     } catch (error) {
       console.error('❌ Erro no middleware de vídeo:', error);
+      return res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        details: error.message 
+      });
+    }
+  });
+
+  // Middleware para servir vídeos diretamente do Wowza (nova rota otimizada)
+  app.use('/wowza-direct', async (req, res, next) => {
+    try {
+      // Verificar autenticação
+      let token = null;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.substring(7);
+      }
+      if (!token && req.query.auth_token) {
+        token = req.query.auth_token;
+      }
+      
+      if (!token) {
+        return res.status(401).json({ error: 'Token de acesso requerido' });
+      }
+
+      try {
+        const jwt = require('jsonwebtoken');
+        const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_super_segura_aqui';
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+      } catch (jwtError) {
+        return res.status(401).json({ error: 'Token inválido' });
+      }
+
+      // Construir URL direta do Wowza
+      const requestPath = req.path.replace('/wowza-direct/', '');
+      const wowzaHost = '51.222.156.223';
+      const wowzaPort = 6980;
+      const wowzaUser = 'admin';
+      const wowzaPassword = 'FK38Ca2SuE6jvJXed97VMn';
+      
+      // URL direta do Wowza com autenticação
+      const wowzaUrl = `http://${wowzaUser}:${wowzaPassword}@${wowzaHost}:${wowzaPort}/content/${requestPath}`;
+      
+      console.log(`🔗 Redirecionamento direto para Wowza: ${wowzaUrl}`);
+      
+      // Redirecionar diretamente para o Wowza
+      res.redirect(wowzaUrl);
+      
+    } catch (error) {
+      console.error('❌ Erro no middleware Wowza direto:', error);
+      return res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        details: error.message 
+      });
+    }
+  });
+
+  // Nova rota para URLs otimizadas do Wowza
+  app.get('/api/wowza/video-url/:userLogin/:folderName/:fileName', async (req, res) => {
+    try {
+      const { userLogin, folderName, fileName } = req.params;
+      
+      // Verificar autenticação
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(500).json({ 
+          error: 'Token de acesso requerido' 
+        });
+      }
+
+      const token = authHeader.substring(7);
+      const jwt = require('jsonwebtoken');
+      const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_super_segura_aqui';
+      
+      try {
+        jwt.verify(token, JWT_SECRET);
+      } catch (jwtError) {
+        return res.status(401).json({ error: 'Token inválido' });
+      }
+
+      // Construir URLs otimizadas do Wowza
+      const wowzaHost = '51.222.156.223';
+      const wowzaUser = 'admin';
+      const wowzaPassword = 'FK38Ca2SuE6jvJXed97VMn';
+      
+      // Garantir que arquivo é MP4
+      const finalFileName = fileName.endsWith('.mp4') ? fileName : fileName.replace(/\.[^/.]+$/, '.mp4');
+      
+      const urls = {
+        // URL direta para download/visualização
+        direct: `http://${wowzaUser}:${wowzaPassword}@${wowzaHost}:6980/content/${userLogin}/${folderName}/${finalFileName}`,
+        
+        // URL HLS para streaming
+        hls: `http://${wowzaHost}:1935/vod/_definst_/mp4:${userLogin}/${folderName}/${finalFileName}/playlist.m3u8`,
+        
+        // URL via proxy do backend (fallback)
+        proxy: `/content/${userLogin}/${folderName}/${finalFileName}`,
+        
+        // URL para nova aba (sem autenticação no header)
+        external: `http://${wowzaUser}:${wowzaPassword}@${wowzaHost}:6980/content/${userLogin}/${folderName}/${finalFileName}`
+      };
+      
+      res.json({
+        success: true,
+        urls: urls,
+        recommended: 'direct', // Recomendar URL direta
+        file_info: {
+          user: userLogin,
+          folder: folderName,
+          file: finalFileName,
+          original_file: fileName
+        }
+      });
+      
+    } catch (error) {
+      console.error('Erro ao gerar URLs do Wowza:', error);
       return res.status(500).json({ 
         error: 'Erro interno do servidor',
         details: error.message 
