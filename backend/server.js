@@ -319,17 +319,46 @@
         return res.status(401).json({ error: 'Token inválido' });
       }
 
-      // Construir URL direta do Wowza
+      // Buscar servidor do usuário dinamicamente
       const requestPath = req.path.replace('/wowza-direct/', '');
-      const wowzaHost = '51.222.156.223';
-      const wowzaPort = 6980;
-      const wowzaUser = 'admin';
-      const wowzaPassword = 'FK38Ca2SuE6jvJXed97VMn';
+      const userLogin = requestPath.split('/')[0];
+      
+      let wowzaHost = '51.222.156.223'; // Fallback padrão
+      let wowzaPort = 6980;
+      let wowzaUser = 'admin';
+      let wowzaPassword = 'FK38Ca2SuE6jvJXed97VMn';
+      
+      try {
+        // Buscar servidor baseado no usuário
+        const [userServerRows] = await db.execute(
+          'SELECT codigo_servidor FROM streamings WHERE codigo_cliente = ? OR login = ? LIMIT 1',
+          [req.user.userId, userLogin]
+        );
+        
+        if (userServerRows.length > 0) {
+          const serverId = userServerRows[0].codigo_servidor;
+          
+          // Buscar dados do servidor
+          const [serverRows] = await db.execute(
+            'SELECT ip, dominio, senha_root FROM wowza_servers WHERE codigo = ? AND status = "ativo"',
+            [serverId]
+          );
+          
+          if (serverRows.length > 0) {
+            const server = serverRows[0];
+            wowzaHost = server.dominio || server.ip;
+            wowzaPassword = server.senha_root || wowzaPassword;
+            console.log(`✅ Wowza-direct usando servidor dinâmico: ${wowzaHost} (ID: ${serverId})`);
+          }
+        }
+      } catch (serverError) {
+        console.warn('Erro ao buscar servidor do usuário no wowza-direct, usando padrão:', serverError.message);
+      }
       
       // URL direta do Wowza com autenticação
       const wowzaUrl = `http://${wowzaUser}:${wowzaPassword}@${wowzaHost}:${wowzaPort}/content/${requestPath}`;
       
-      console.log(`🔗 Redirecionamento direto para Wowza: ${wowzaUrl}`);
+      console.log(`🔗 Redirecionamento direto para Wowza dinâmico (${wowzaHost}): ${wowzaUrl}`);
       
       // Redirecionar diretamente para o Wowza
       res.redirect(wowzaUrl);

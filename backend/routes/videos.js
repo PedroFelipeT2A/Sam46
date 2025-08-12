@@ -326,7 +326,20 @@ router.get('/test/:userId/:folder/:filename', authMiddleware, async (req, res) =
       [userId]
     );
 
-    const serverId = serverRows.length > 0 ? serverRows[0].codigo_servidor : 1;
+    let serverId = serverRows.length > 0 ? serverRows[0].codigo_servidor : null;
+    
+    // Se não tem servidor específico, buscar o melhor servidor disponível
+    if (!serverId) {
+      const [bestServerRows] = await db.execute(
+        `SELECT codigo FROM wowza_servers 
+         WHERE status = 'ativo' 
+         ORDER BY streamings_ativas ASC, load_cpu ASC 
+         LIMIT 1`
+      );
+      serverId = bestServerRows.length > 0 ? bestServerRows[0].codigo : 1;
+      
+      console.log(`📡 Usuário ${userId} sem servidor específico para vídeo, usando melhor disponível: ${serverId}`);
+    }
     const remotePath = `/usr/local/WowzaStreamingEngine/content/${userLogin}/${folder}/${filename}`;
 
     try {
