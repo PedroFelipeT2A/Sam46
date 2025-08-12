@@ -408,7 +408,7 @@ router.post('/:id/sync', authMiddleware, async (req, res) => {
   try {
     const folderId = req.params.id;
     const userId = req.user.id;
-    const userLogin = req.user.email.split('@')[0];
+    const userLogin = req.user.email ? req.user.email.split('@')[0] : `user_${userId}`;
 
     // Buscar dados da pasta
     const [folderRows] = await db.execute(
@@ -421,7 +421,19 @@ router.post('/:id/sync', authMiddleware, async (req, res) => {
     }
 
     const folder = folderRows[0];
-    const serverId = folder.codigo_servidor || 1;
+    let serverId = folder.codigo_servidor;
+    
+    // Se não tem servidor específico, buscar o melhor servidor disponível
+    if (!serverId) {
+      const [bestServerRows] = await db.execute(
+        `SELECT codigo FROM wowza_servers 
+         WHERE status = 'ativo' 
+         ORDER BY streamings_ativas ASC, load_cpu ASC 
+         LIMIT 1`
+      );
+      serverId = bestServerRows.length > 0 ? bestServerRows[0].codigo : 1;
+    }
+    
     const folderName = folder.identificacao;
 
     try {

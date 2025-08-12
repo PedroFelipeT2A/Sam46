@@ -158,6 +158,43 @@
       const folderName = pathParts[1];
       const fileName = pathParts[2];
       
+      // Buscar servidor do usuário dinamicamente
+      let wowzaHost = '51.222.156.223'; // Fallback padrão
+      let wowzaPort = 6980;
+      let wowzaUser = 'admin';
+      let wowzaPassword = 'FK38Ca2SuE6jvJXed97VMn';
+      
+      try {
+        // Buscar servidor baseado no usuário logado
+        const [userServerRows] = await db.execute(
+          'SELECT codigo_servidor FROM streamings WHERE codigo_cliente = ? OR login = ? LIMIT 1',
+          [req.user.userId, userLogin]
+        );
+        
+        if (userServerRows.length > 0) {
+          const serverId = userServerRows[0].codigo_servidor;
+          
+          // Buscar dados do servidor
+          const [serverRows] = await db.execute(
+            'SELECT ip, dominio, senha_root FROM wowza_servers WHERE codigo = ? AND status = "ativo"',
+            [serverId]
+          );
+          
+          if (serverRows.length > 0) {
+            const server = serverRows[0];
+            wowzaHost = server.dominio || server.ip; // Priorizar domínio
+            wowzaPassword = server.senha_root || wowzaPassword;
+            console.log(`✅ Usando servidor dinâmico: ${wowzaHost} (Servidor ID: ${serverId})`);
+          } else {
+            console.log(`⚠️ Servidor ${serverId} não encontrado, usando padrão`);
+          }
+        } else {
+          console.log(`⚠️ Servidor do usuário ${userLogin} não encontrado, usando padrão`);
+        }
+      } catch (serverError) {
+        console.warn('Erro ao buscar servidor do usuário, usando padrão:', serverError.message);
+      }
+      
       // Verificar se é MP4 ou precisa de conversão
       const fileExtension = path.extname(fileName).toLowerCase();
       const needsConversion = !['.mp4'].includes(fileExtension);
@@ -166,15 +203,8 @@
       const finalFileName = needsConversion ? 
         fileName.replace(/\.[^/.]+$/, '.mp4') : fileName;
       
-      // Configurar URL do Wowza - SEMPRE usar URLs diretas do Wowza
+      // Configurar URL do Wowza dinâmico
       const fetch = require('node-fetch');
-      const isProduction = process.env.NODE_ENV === 'production';
-      
-      // SEMPRE usar o servidor Wowza diretamente (não localhost)
-      const wowzaHost = '51.222.156.223'; // IP direto do Wowza
-      const wowzaPort = 6980; // Porta para VOD
-      const wowzaUser = 'admin';
-      const wowzaPassword = 'FK38Ca2SuE6jvJXed97VMn';
       
       let wowzaUrl;
       if (isStreamFile) {
@@ -185,7 +215,7 @@
         wowzaUrl = `http://${wowzaUser}:${wowzaPassword}@${wowzaHost}:${wowzaPort}/content/${userLogin}/${folderName}/${finalFileName}`;
       }
       
-      console.log(`🔗 Redirecionando para Wowza: ${wowzaUrl}`);
+      console.log(`🔗 Redirecionando para Wowza dinâmico (${wowzaHost}): ${wowzaUrl}`);
       
       try {
         const requestHeaders = {
@@ -321,7 +351,7 @@
       // Verificar autenticação
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(500).json({ 
+        return res.status(401).json({ 
           error: 'Token de acesso requerido' 
         });
       }
@@ -331,16 +361,45 @@
       const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_super_segura_aqui';
       
       try {
-        jwt.verify(token, JWT_SECRET);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        
+        // Buscar servidor do usuário dinamicamente
+        let wowzaHost = '51.222.156.223'; // Fallback padrão
+        let wowzaPort = 6980;
+        let wowzaUser = 'admin';
+        let wowzaPassword = 'FK38Ca2SuE6jvJXed97VMn';
+        
+        try {
+          // Buscar servidor baseado no usuário
+          const [userServerRows] = await db.execute(
+            'SELECT codigo_servidor FROM streamings WHERE codigo_cliente = ? OR login = ? LIMIT 1',
+            [decoded.userId, userLogin]
+          );
+          
+          if (userServerRows.length > 0) {
+            const serverId = userServerRows[0].codigo_servidor;
+            
+            // Buscar dados do servidor
+            const [serverRows] = await db.execute(
+              'SELECT ip, dominio, senha_root FROM wowza_servers WHERE codigo = ? AND status = "ativo"',
+              [serverId]
+            );
+            
+            if (serverRows.length > 0) {
+              const server = serverRows[0];
+              wowzaHost = server.dominio || server.ip;
+              wowzaPassword = server.senha_root || wowzaPassword;
+              console.log(`✅ API Wowza usando servidor dinâmico: ${wowzaHost} (ID: ${serverId})`);
+            }
+          }
+        } catch (serverError) {
+          console.warn('Erro ao buscar servidor do usuário na API, usando padrão:', serverError.message);
+        }
+        
       } catch (jwtError) {
         return res.status(401).json({ error: 'Token inválido' });
       }
 
-      // Construir URLs otimizadas do Wowza
-      const wowzaHost = '51.222.156.223';
-      const wowzaUser = 'admin';
-      const wowzaPassword = 'FK38Ca2SuE6jvJXed97VMn';
-      
       // Garantir que arquivo é MP4
       const finalFileName = fileName.endsWith('.mp4') ? fileName : fileName.replace(/\.[^/.]+$/, '.mp4');
       
@@ -362,6 +421,11 @@
         success: true,
         urls: urls,
         recommended: 'direct', // Recomendar URL direta
+        server_info: {
+          host: wowzaHost,
+          port: wowzaPort,
+          dynamic: true
+        },
         file_info: {
           user: userLogin,
           folder: folderName,

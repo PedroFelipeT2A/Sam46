@@ -985,7 +985,7 @@ const GerenciarVideos: React.FC = () => {
             {/* Player HTML5 com URL direta do Wowza */}
             <div className={`w-full h-full ${isFullscreen ? 'p-0' : 'p-4 pt-16'}`}>
               <video
-                src={buildWowzaDirectUrl(currentVideo)}
+                src={currentVideo ? await buildWowzaDirectUrl(currentVideo) : ''}
                 className="w-full h-full object-contain"
                 controls
                 autoPlay
@@ -995,16 +995,16 @@ const GerenciarVideos: React.FC = () => {
                   toast.error('Erro ao carregar vídeo do Wowza. Tente abrir em nova aba.');
                 }}
               >
-                <source src={buildWowzaDirectUrl(currentVideo)} type="video/mp4" />
-                <source src={buildWowzaHLSUrl(currentVideo)} type="application/vnd.apple.mpegurl" />
+                <source src={currentVideo ? await buildWowzaDirectUrl(currentVideo) : ''} type="video/mp4" />
+                <source src={currentVideo ? await buildWowzaHLSUrl(currentVideo) : ''} type="application/vnd.apple.mpegurl" />
                 Seu navegador não suporta reprodução de vídeo.
               </video>
             </div>
 
             {/* Informações técnicas */}
             <div className="absolute bottom-4 left-4 z-20 bg-black bg-opacity-60 text-white px-3 py-2 rounded-lg text-xs">
-              <p>URL Direta: {buildWowzaDirectUrl(currentVideo)}</p>
-              <p>URL HLS: {buildWowzaHLSUrl(currentVideo)}</p>
+              <p>Servidor: Dinâmico (baseado no usuário)</p>
+              <p>Formato: MP4 otimizado</p>
             </div>
           </div>
         </div>
